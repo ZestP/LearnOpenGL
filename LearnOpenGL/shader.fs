@@ -1,15 +1,17 @@
-#version 330 core
+#version 430 core
 #define MAXFLOAT 10000000.0
 #define M_PI 3.1415926
 precision highp float;
 out vec4 fragColor;
 in vec2 fragCoord;
 in vec2 texCoord;
+in vec3 vecColor;
 uniform vec3 iResolution;
 uniform vec4 iMouse;
 uniform float iTime;
 uniform int RandSeed;
-uniform sampler2D ourTexture;
+uniform sampler2D texture1;
+uniform sampler2D texture2;
 uniform bool Trace;
 int state;
 
@@ -123,9 +125,9 @@ struct YZ_rect
 struct Hitable_list
 {
 	Sphere spheres[2];
-	XY_rect xyrects[100];
-	XZ_rect xzrects[100];
-	YZ_rect yzrects[100];
+	XY_rect xyrects[1];
+	XZ_rect xzrects[3];
+	YZ_rect yzrects[2];
 	int sphere_cnt,xyrect_cnt,xzrect_cnt,yzrect_cnt;
 };
 
@@ -499,45 +501,49 @@ vec3 color(Ray r)
 // main
 void main() {
 	// state = int(fragCoord.x * 1973 + fragCoord.y * 9277) | 1;
-	state=int(fragCoord.x * 1973 + fragCoord.y * 9277+RandSeed) | 1;
-	int ns=100;
-	world.sphere_cnt=2;
-	world.spheres[0]=Sphere(vec3(400,100,400),100,2,Metal(vec3(0.8,0.8,0.8),1),Lambertian(vec3(0.5,0.5,0.5)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)));
-	world.spheres[1]=Sphere(vec3(200,100,200),100,0,Metal(vec3(0.8,0.8,0.8),0.3),Lambertian(vec3(0.5,0.5,0.5)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)));
-	world.xyrect_cnt=1;
-	world.xyrects[0]=XY_rect(0,555,0,555,555,1,Metal(vec3(0.8,0.8,0.8),1.0),Lambertian(vec3(0.73,0.73,0.73)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)),true);
-	world.yzrect_cnt=2;
-	world.yzrects[0]=YZ_rect(0,555,0,555,555,1,Metal(vec3(0.8,0.8,0.8),1.0),Lambertian(vec3(0.12,0.45,0.15)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)),true);
-	world.yzrects[1]=YZ_rect(0,555,0,555,0,1,Metal(vec3(0.8,0.8,0.8),1.0),Lambertian(vec3(0.65,0.05,0.05)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)),false);
-	world.xzrect_cnt=3;
-	world.xzrects[0]=XZ_rect(213,343,227,332,554,3,Metal(vec3(0.8,0.8,0.8),1.0),Lambertian(vec3(0.8,0.8,0.8)),Dielectric(1.5),Diffuse_light(vec3(15,15,15)),false);
-	world.xzrects[1]=XZ_rect(0,555,0,555,555,1,Metal(vec3(0.8,0.8,0.8),1.0),Lambertian(vec3(0.73,0.73,0.73)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)),true);
-	world.xzrects[2]=XZ_rect(0,555,0,555,0,1,Metal(vec3(0.8,0.8,0.8),1.0),Lambertian(vec3(0.73,0.73,0.73)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)),false);
-	// fragColor=vec4(0,0,0,0);
+	// state=int(fragCoord.x * 1973 + fragCoord.y * 9277+RandSeed) | 1;
+	// int ns=100;
+	// world.sphere_cnt=2;
+	// world.spheres[0]=Sphere(vec3(400,100,400),100,2,Metal(vec3(0.8,0.8,0.8),1),Lambertian(vec3(0.5,0.5,0.5)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)));
+	// world.spheres[1]=Sphere(vec3(200,100,200),100,0,Metal(vec3(0.8,0.8,0.8),0.3),Lambertian(vec3(0.5,0.5,0.5)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)));
+	// world.xyrect_cnt=1;
+	// world.xyrects[0]=XY_rect(0,555,0,555,555,1,Metal(vec3(0.8,0.8,0.8),1.0),Lambertian(vec3(0.73,0.73,0.73)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)),true);
+	// world.yzrect_cnt=2;
+	// world.yzrects[0]=YZ_rect(0,555,0,555,555,1,Metal(vec3(0.8,0.8,0.8),1.0),Lambertian(vec3(0.12,0.45,0.15)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)),true);
+	// world.yzrects[1]=YZ_rect(0,555,0,555,0,1,Metal(vec3(0.8,0.8,0.8),1.0),Lambertian(vec3(0.65,0.05,0.05)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)),false);
+	// world.xzrect_cnt=3;
+	// world.xzrects[0]=XZ_rect(213,343,227,332,554,3,Metal(vec3(0.8,0.8,0.8),1.0),Lambertian(vec3(0.8,0.8,0.8)),Dielectric(1.5),Diffuse_light(vec3(15,15,15)),false);
+	// world.xzrects[1]=XZ_rect(0,555,0,555,555,1,Metal(vec3(0.8,0.8,0.8),1.0),Lambertian(vec3(0.73,0.73,0.73)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)),true);
+	// world.xzrects[2]=XZ_rect(0,555,0,555,0,1,Metal(vec3(0.8,0.8,0.8),1.0),Lambertian(vec3(0.73,0.73,0.73)),Dielectric(1.5),Diffuse_light(vec3(8,8,8)),false);
+	// // fragColor=vec4(0,0,0,0);
 	
-	fragColor=texture(ourTexture,texCoord);
+	// fragColor=texture(ourTexture,texCoord);
 
-	Camera cam;
-	// cam.llc=vec3(-2.0,-1.0,-1.0);
-	// cam.horizontal=vec3(4,0,0);
-	// cam.vertical=vec3(0,2,0);
-	// cam.origin=vec3(0,0,0);
-	vec3 lookfrom=vec3(278,278,-800);
-	vec3 lookat=vec3(278,278,0);
-	float dist_to_focus=10;
-	float aperture=0.0;
-	Place_cam(cam,lookfrom,lookat,vec3(0,1,0),40,2,aperture,dist_to_focus);
+	// Camera cam;
+	// // cam.llc=vec3(-2.0,-1.0,-1.0);
+	// // cam.horizontal=vec3(4,0,0);
+	// // cam.vertical=vec3(0,2,0);
+	// // cam.origin=vec3(0,0,0);
+	// vec3 lookfrom=vec3(278,278,-800);
+	// vec3 lookat=vec3(278,278,0);
+	// float dist_to_focus=10;
+	// float aperture=0.0;
+	// Place_cam(cam,lookfrom,lookat,vec3(0,1,0),40,2,aperture,dist_to_focus);
 	
-	for(int s=0;s<ns;s++)
-	{
-		float u=float(fragCoord.x+RandomFloat01())/float(iResolution.x);
-		float v=float(fragCoord.y+RandomFloat01())/float(iResolution.y);
+	// for(int s=0;s<ns;s++)
+	// {
+	// 	float u=float(fragCoord.x+RandomFloat01())/float(iResolution.x);
+	// 	float v=float(fragCoord.y+RandomFloat01())/float(iResolution.y);
 
-		Ray r=get_ray(cam,u,v);
-		fragColor+= color(r).xyzz;
-	}
-	fragColor/=float(ns);
-	fragColor=vec4(sqrt(fragColor.x),sqrt(fragColor.y),sqrt(fragColor.z),1);
+	// 	Ray r=get_ray(cam,u,v);
+	// 	fragColor+= color(r).xyzz;
+	// }
+	// fragColor/=float(ns);
+	// fragColor=vec4(sqrt(fragColor.x),sqrt(fragColor.y),sqrt(fragColor.z),1);
+	//fragColor=vec4(texCoord.x,texCoord.y,0,1f);
+	//fragColor.xyz=vecColor;
+	fragColor=mix(texture(texture1,texCoord),texture(texture2,texCoord),0.5);
+	//fragColor=texture(texture2,texCoord);
 }
 
 // void main() {

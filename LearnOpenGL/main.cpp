@@ -5,12 +5,24 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <ctime>
+#include <vector>
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
 #include "shader.h"
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+
+
+
+#include "model.h"
 #define TEXTURE_WIDTH 1600
 #define TEXTURE_HEIGHT 800
 using namespace std;
+
+const GLuint SHADOW_WIDTH = 8196, SHADOW_HEIGHT = 8196;
+GLuint depthMapFBO;
+GLuint depthMap;
+
+
 float screenWidth = 1600, screenHeight = 800;
 float lastX = 800, lastY = 400;
 float vertices[] = {
@@ -73,11 +85,12 @@ glm::vec3 cubePositions[] = {
 unsigned int VBO;
 unsigned int vertexShader;
 unsigned int VAO;
+unsigned int lightVAO;
 unsigned int EBO;
 unsigned int fragmentShader;
 unsigned int shaderProgram;
 unsigned int framebuffer,fbo2,renderbuffer, rendertarget,rin;
-Shader* ourShader;
+Shader* ourShader, *diffuseShader,*lampShader,*blinnPhongShader,*simpleDepthShader;
 int cnt = 0;
 unsigned int texture,texture2;
 
@@ -88,14 +101,17 @@ float yaw, pitch,fov=45.0f;
 float deltaTime = 0.0f; // 当前帧与上一帧的时间差
 float lastFrame = 0.0f; // 上一帧的时间
 
+glm::vec3 lightPos(-6.0f, 10.0f, 3.0f),lightDir(0.6f, -1.0f, -0.3f);
+
+Model* testModel;
 bool firstMouse = true;
+
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 {
 	glViewport(0, 0, width, height);
 	screenWidth = width;
 	screenHeight = height;
 }
-
 
 void processInput(GLFWwindow* window)
 {
@@ -123,16 +139,44 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 	if (fov >= 45.0f)
 		fov = 45.0f;
 }
+Shader *debugDepthQuad;
+unsigned int quadVAO = 0;
+unsigned int quadVBO;
+GLfloat near_plane = 1.0f, far_plane = 7000.5f;
 
-void render(GLFWwindow* window)
+void renderQuad()
+{
+	if (quadVAO == 0)
+	{
+		float quadVertices[] = {
+			// positions        // texture Coords
+			-1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
+			-1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
+			 1.0f,  1.0f, 0.0f, 1.0f, 1.0f,
+			 1.0f, -1.0f, 0.0f, 1.0f, 0.0f,
+		};
+		// setup plane VAO
+		glGenVertexArrays(1, &quadVAO);
+		glGenBuffers(1, &quadVBO);
+		glBindVertexArray(quadVAO);
+		glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+		glEnableVertexAttribArray(1);
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+	}
+	glBindVertexArray(quadVAO);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindVertexArray(0);
+}
+
+void RenderScene()
 {
 	//glBindFramebuffer(GL_READ_FRAMEBUFFER, GL_NONE);
-	//glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GL_NONE);
-	//glBindTexture(GL_TEXTURE_2D, rendertarget);
-	float currentFrame = glfwGetTime();
-	deltaTime = currentFrame - lastFrame;
-	lastFrame = currentFrame;
-
+//glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GL_NONE);
+//glBindTexture(GL_TEXTURE_2D, rendertarget);
+	
 	glm::mat4 model = glm::mat4(1.0f);
 	model = glm::rotate(model, (float)glfwGetTime(), glm::vec3(1.0f, 0.0f, 0.0f));
 	glm::mat4 view = glm::mat4(1.0f);
@@ -140,8 +184,8 @@ void render(GLFWwindow* window)
 	glm::mat4 projection = glm::mat4(1.0f);
 	projection = glm::perspective(glm::radians(fov), screenWidth / screenHeight, 0.1f, 100.0f);
 	glBindVertexArray(VAO);
-	
-	
+
+
 	glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	// bind textures on corresponding texture units
@@ -160,7 +204,7 @@ void render(GLFWwindow* window)
 	glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 	glBindVertexArray(VAO);
 	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-	
+
 	for (unsigned int i = 0; i < 10; i++)
 	{
 		glm::mat4 model=glm::mat4(1.0f);
@@ -171,8 +215,71 @@ void render(GLFWwindow* window)
 
 		glDrawArrays(GL_TRIANGLES, 0, 36);
 	}
+	lampShader->use();
+	model = glm::mat4(1.0f);
+	//model = glm::translate(model, lightPos);
+	//model = glm::scale(model, glm::vec3(0.2f));
+	lampShader->setMat4("projection", projection);
+	lampShader->setMat4("view", view);
+	lampShader->setMat4("model", model);
+	glBindVertexArray(lightVAO);
+	glDrawArrays(GL_TRIANGLES, 0, 36);
+	blinnPhongShader->use();
+	blinnPhongShader->setMat4("projection", projection);
+	blinnPhongShader->setMat4("view", view);
 
-	
+	// render the loaded model
+	glm::mat4 model2 = glm::mat4(1.0f);
+	model2 = glm::translate(model2, glm::vec3(0.0f, -1.75f, 0.0f)); // translate it down so it's at the center of the scene
+	model2 = glm::rotate(model2, glm::radians(-90.0f), glm::vec3(1, 0, 0));
+	model2 = glm::scale(model2, glm::vec3(0.2f, 0.2f, 0.2f));	// it's a bit too big for our scene, so scale it down
+	blinnPhongShader->setMat4("model", model2);
+	blinnPhongShader->setVec3("objectColor", 1.0f, 0.5f, 0.31f);
+	blinnPhongShader->setVec3("lightColor", 1.0f, 1.0f, 1.0f);
+	blinnPhongShader->setVec3("lightPos", lightPos);
+	blinnPhongShader->setVec3("viewPos", cameraPos);
+	blinnPhongShader->setVec3("mat.ambient", 1.0f, 0.5f, 0.31f);
+	blinnPhongShader->setVec3("mat.diffuse", 1.0f, 0.5f, 0.31f);
+	blinnPhongShader->setVec3("mat.specular", 0.5f, 0.5f, 0.5f);
+	blinnPhongShader->setFloat("mat.shininess", 32.0f);
+
+	glm::vec3 lightColor;
+	lightColor.x = sin(glfwGetTime() * 2.0f);
+	lightColor.y = sin(glfwGetTime() * 0.7f);
+	lightColor.z = sin(glfwGetTime() * 1.3f);
+
+	glm::vec3 diffuseColor = lightColor * glm::vec3(0.5f); // 降低影响
+	glm::vec3 ambientColor = diffuseColor * glm::vec3(0.2f); // 很低的影响
+
+	glm::mat4 lightProjection = glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, near_plane, far_plane);
+	glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+	glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+	blinnPhongShader->setMat4("lightSpaceMatrixLocation", lightSpaceMatrix);
+
+	glActiveTexture(GL_TEXTURE5);
+	glBindTexture(GL_TEXTURE_2D, depthMap);
+	blinnPhongShader->setInt("shadowMap", 5);
+
+	blinnPhongShader->setVec3("dirLight.direction",lightDir);
+
+	blinnPhongShader->setVec3("dirLight.ambient", 0.2f, 0.2f, 0.2f);
+	blinnPhongShader->setVec3("dirLight.diffuse", 0.5f, 0.5f, 0.5f); // 将光照调暗了一些以搭配场景
+	blinnPhongShader->setVec3("dirLight.specular", 1.0f, 1.0f, 1.0f);
+	blinnPhongShader->setFloat("dirLight.constant", 1.0f);
+	blinnPhongShader->setFloat("dirLight.linear", 0.09f);
+	blinnPhongShader->setFloat("dirLight.quadratic", 0.032f);
+
+	blinnPhongShader->setVec3("spotLight.position", cameraPos);
+	blinnPhongShader->setVec3("spotLight.direction", cameraFront);
+	blinnPhongShader->setFloat("spotLight.cutOff", glm::cos(glm::radians(12.5f)));
+	blinnPhongShader->setFloat("spotLight.outerCutOff", glm::cos(glm::radians(17.5f)));
+	blinnPhongShader->setVec3("spotLight.ambient", 0.2f, 0.2f, 0.2f);
+	blinnPhongShader->setVec3("spotLight.diffuse", 0.5f, 0.5f, 0.5f); // 将光照调暗了一些以搭配场景
+	blinnPhongShader->setVec3("spotLight.specular", 1.0f, 1.0f, 1.0f);
+	blinnPhongShader->setFloat("spotLight.constant", 1.0f);
+	blinnPhongShader->setFloat("spotLight.linear", 0.09f);
+	blinnPhongShader->setFloat("spotLight.quadratic", 0.032f);
+	testModel->Draw(*blinnPhongShader);
 	//
 	//glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
 	//glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GL_NONE);
@@ -186,6 +293,106 @@ void render(GLFWwindow* window)
 	glClear(GL_COLOR_BUFFER_BIT);
 	glBlitFramebuffer(0, 0, 1599, 799, 0, 0, 1599, 799, GL_COLOR_BUFFER_BIT, GL_NEAREST);*/
 
+}
+
+void RenderScene(Shader* shader)
+{
+	//glBindFramebuffer(GL_READ_FRAMEBUFFER, GL_NONE);
+//glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GL_NONE);
+//glBindTexture(GL_TEXTURE_2D, rendertarget);
+
+	glm::mat4 model = glm::mat4(1.0f);
+	model = glm::rotate(model, (float)glfwGetTime(), glm::vec3(1.0f, 0.0f, 0.0f));
+	glBindVertexArray(VAO);
+
+	for (unsigned int i = 0; i < 10; i++)
+	{
+		glm::mat4 model = glm::mat4(1.0f);
+		model = glm::translate(model, cubePositions[i]);
+		float angle = 20.0f * i;
+		model = glm::rotate(model, glm::radians(angle + (float)glfwGetTime() * 1000.0f), glm::vec3(1.0f, 0.3f, 0.5f));
+		shader->setMat4("model", model);
+
+		glDrawArrays(GL_TRIANGLES, 0, 36);
+	}
+
+
+
+	//// bind textures on corresponding texture units
+
+	//// render container
+
+	//int modelLoc = glGetUniformLocation(shader->ID, "model");
+	//glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+	//
+	glBindVertexArray(VAO);
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+	
+
+	model = glm::mat4(1.0f);
+	//model = glm::translate(model, lightPos);
+	//model = glm::scale(model, glm::vec3(0.2f));
+	
+	shader->setMat4("model", model);
+	glBindVertexArray(lightVAO);
+	glDrawArrays(GL_TRIANGLES, 0, 36);
+
+	
+	// render the loaded model
+	glm::mat4 model2 = glm::mat4(1.0f);
+	model2 = glm::translate(model2, glm::vec3(0.0f, -1.75f, 0.0f)); // translate it down so it's at the center of the scene
+	model2 = glm::rotate(model2, glm::radians(-90.0f), glm::vec3(1, 0, 0));
+	model2 = glm::scale(model2, glm::vec3(0.2f, 0.2f, 0.2f));	// it's a bit too big for our scene, so scale it down
+	shader->setMat4("model", model2);
+	
+	testModel->Draw(*shader);
+	
+}
+
+void ConfigureShaderAndMatrices()
+{
+	
+	glm::mat4 lightProjection = glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, near_plane, far_plane);
+	glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+	glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+	simpleDepthShader->use();
+	simpleDepthShader->setMat4("lightSpaceMatrixLocation", lightSpaceMatrix);
+	
+}
+
+void render(GLFWwindow* window)
+{
+	float currentFrame = glfwGetTime();
+	deltaTime = currentFrame - lastFrame;
+	lastFrame = currentFrame;
+
+
+	glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	ConfigureShaderAndMatrices();
+
+	// 1. 首选渲染深度贴图
+	glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+	glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+	glClear(GL_DEPTH_BUFFER_BIT);
+	RenderScene(simpleDepthShader);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	// 2. 像往常一样渲染场景，但这次使用深度贴图
+	glViewport(0, 0, screenWidth, screenHeight);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	//// render Depth map to quad for visual debugging
+	//		// ---------------------------------------------
+	//debugDepthQuad->use();
+	//debugDepthQuad->setFloat("near_plane", near_plane);
+	//debugDepthQuad->setFloat("far_plane", far_plane);
+	//glActiveTexture(GL_TEXTURE0);
+	//glBindTexture(GL_TEXTURE_2D, depthMap);
+	//renderQuad();
+
+
+	RenderScene();
 }
 
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
@@ -255,8 +462,10 @@ void init(GLFWwindow* window)
 	//glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, rin, 0);
 	//glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, renderbuffer);
 	//glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glEnable(GL_MULTISAMPLE);
 	glEnable(GL_DEPTH_TEST);
-
+	testModel=new Model("Models/Shokaku/Shokaku.fbx");
+	//testModel = new Model("Models/Nanosuit/nanosuit.obj");
 	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	
 	glGenVertexArrays(1, &VAO);
@@ -271,6 +480,35 @@ void init(GLFWwindow* window)
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
 	glEnableVertexAttribArray(1);
+	
+	glGenVertexArrays(1, &lightVAO);
+	glBindVertexArray(lightVAO);
+	// 只需要绑定VBO不用再次设置VBO的数据，因为箱子的VBO数据中已经包含了正确的立方体顶点数据
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	// 设置灯立方体的顶点属性（对我们的灯来说仅仅只有位置数据）
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(0);
+	
+	
+
+	glGenFramebuffers(1, &depthMapFBO);
+	glGenTextures(1, &depthMap);
+	glBindTexture(GL_TEXTURE_2D, depthMap);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
+		SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+	glDrawBuffer(GL_NONE);
+	glReadBuffer(GL_NONE);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+
+	
+	
 	glGenTextures(1, &texture);
 	
 	glBindTexture(GL_TEXTURE_2D, texture);
@@ -347,7 +585,8 @@ void init(GLFWwindow* window)
 	//}
 	//glDeleteShader(vertexShader);
 	//glDeleteShader(fragmentShader);
-	ourShader = new Shader("shader.vs", "shader.fs", nullptr, nullptr);
+	lampShader = new Shader("Shaders/lamp.vs", "Shaders/lamp.fs", nullptr, nullptr);
+	ourShader = new Shader("Shaders/shader.vs", "Shaders/shader.fs", nullptr, nullptr);
 	ourShader->use();
 	glUniform1i(glGetUniformLocation(ourShader->ID, "texture1"), 0);
 	ourShader->setInt("texture2", 1);
@@ -355,7 +594,10 @@ void init(GLFWwindow* window)
 	ourShader->setInt("RandSeed", rand());
 	ourShader->setVec3("iResolution", glm::vec3(1600, 800, 1)); 
 
-
+	diffuseShader = new Shader("Shaders/onlyDiffuse.vs", "Shaders/onlyDiffuse.fs", nullptr, nullptr);
+	blinnPhongShader = new Shader("Shaders/blinnPhong.vs", "Shaders/blinnPhong.fs", nullptr, nullptr);
+	simpleDepthShader = new Shader("Shaders/simpleDepthShader.vs", "Shaders/simpleDepthShader.fs", nullptr, nullptr);
+	debugDepthQuad = new Shader("Shaders/debug_quad_depth.vs", "Shaders/debug_quad_depth.fs", nullptr, nullptr);
 }
 int main()
 {
@@ -363,7 +605,7 @@ int main()
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
+	glfwWindowHint(GLFW_SAMPLES, 4);
 	GLFWwindow* window = glfwCreateWindow(1600, 800, "LearnOpenGL", NULL, NULL);
 	if (window == NULL)
 	{
